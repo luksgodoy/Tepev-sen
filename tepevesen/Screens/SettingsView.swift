@@ -56,7 +56,7 @@ struct SettingsView: View {
                         }
 
                         section("format") {
-                            row("requested", "\(Int(AudioMachine.preferredSampleRate / 1000))k · \(AudioMachine.bitDepth) bit")
+                            row("asked for", "\(Int(AudioMachine.preferredSampleRate / 1000))k · \(AudioMachine.bitDepth) bit")
                             row("actual", actualFormat)
                             row("input", device.jacks.inputName)
                             row("output", device.jacks.outputName)

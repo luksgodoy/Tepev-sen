@@ -55,6 +55,15 @@ final class AudioMachine: ObservableObject {
     /// Shown in `setup` so a failure to record is diagnosable from the phone.
     @Published private(set) var inputDiagnostics: String = ""
 
+    /// `lastError` trimmed to something that fits across 64 dots. The detail
+    /// stays in `setup`, where there is room for it.
+    var shortError: String {
+        guard let lastError else { return "input error" }
+        return lastError
+            .components(separatedBy: " · ").first?
+            .components(separatedBy: " — ").first ?? lastError
+    }
+
     /// Tape speed, 0.25×…4×. 1.0 is nominal.
     @Published var speed: Double = 1.0 {
         didSet { applySpeed() }
@@ -97,6 +106,12 @@ final class AudioMachine: ObservableObject {
     private var isConfigured = false
     /// Whether the graph standing right now was built with microphone access.
     private var configuredWithMic = false
+    /// The input node came back with a real format the last time the graph was
+    /// built. Drives the sample-rate fallback in `configure`.
+    private var inputIsUsable = false
+    /// The mic could not follow the machine's rated rate on this device, so we
+    /// stop asking for it. Sticky for the life of the process.
+    private var highRateRejected = false
     private var silentTicks = 0
     /// How many times the tap has fired this take, regardless of what was
     /// done with the buffers.
@@ -136,8 +151,26 @@ final class AudioMachine: ObservableObject {
 
         // Session first, every time. Only once it is live does touching a node
         // give a truthful answer.
-        let session = activateSession()
+        var session = activateSession(preferredRate: highRateRejected ? nil : Self.preferredSampleRate)
         buildEngine(withInput: granted)
+
+        // The rate is a negotiation, not a demand.
+        //
+        // A phone runs one clock for input and output together. The speaker
+        // will happily go to 96 kHz; the built-in mic will not, and asking
+        // anyway takes the whole session somewhere the microphone cannot
+        // follow — the input node comes back with no format at all and the
+        // machine cannot record. So: ask high, check whether the mic survived,
+        // and if it did not, drop the request and rebuild at whatever rate the
+        // hardware runs at on its own.
+        if granted, !inputIsUsable, !highRateRejected {
+            highRateRejected = true
+            let attempted = Int(Self.preferredSampleRate / 1000)
+            try? AVAudioSession.sharedInstance().setActive(false)
+            session = activateSession(preferredRate: nil)
+            buildEngine(withInput: true)
+            inputDiagnostics = "\(attempted)k refused by the mic · \(inputDiagnostics)"
+        }
 
         actualSampleRate = session.sampleRate
         actualChannels = max(1, session.inputNumberOfChannels)
@@ -155,11 +188,14 @@ final class AudioMachine: ObservableObject {
     ///
     /// Every call gets its own `do`. Sharing one block means a throw from any
     /// preference skips everything after it — and `setActive` was last, so a
-    /// phone that simply declined 96 kHz ended up with a session that was never
-    /// activated at all and an input node with no format. Preferences are
-    /// requests; activation is the only line here that must happen.
+    /// phone that simply declined a rate ended up with a session that was never
+    /// activated at all. Preferences are requests; activation is the only line
+    /// here that must happen.
+    ///
+    /// `preferredRate: nil` clears the request and lets the hardware run at its
+    /// own clock, which is the only setting guaranteed to keep the mic alive.
     @discardableResult
-    private func activateSession() -> AVAudioSession {
+    private func activateSession(preferredRate: Double?) -> AVAudioSession {
         let session = AVAudioSession.sharedInstance()
 
         do {
@@ -172,9 +208,8 @@ final class AudioMachine: ObservableObject {
             lastError = "category: \(error.localizedDescription)"
         }
 
-        // Ask for the machine's rated format. A refusal here is completely
-        // normal — the phone gives what it has and the machine reports it.
-        try? session.setPreferredSampleRate(Self.preferredSampleRate)
+        // 0 removes the preference entirely.
+        try? session.setPreferredSampleRate(preferredRate ?? 0)
         try? session.setPreferredIOBufferDuration(0.005)
 
         do {
@@ -234,16 +269,19 @@ final class AudioMachine: ObservableObject {
             let input = engine.inputNode
             let format = input.inputFormat(forBus: 0)
             let session = AVAudioSession.sharedInstance()
-            inputDiagnostics = "\(Int(format.sampleRate)) hz · \(format.channelCount) ch"
+            inputDiagnostics = "mic \(Int(format.sampleRate)) hz / \(format.channelCount) ch"
                 + " · session \(Int(session.sampleRate)) hz"
-                + " · input \(session.isInputAvailable ? "available" : "unavailable")"
-            if format.sampleRate > 0, format.channelCount > 0 {
+                + " · \(session.isInputAvailable ? "available" : "unavailable")"
+            inputIsUsable = format.sampleRate > 0 && format.channelCount > 0
+            if inputIsUsable {
                 engine.connect(input, to: monitorMixer, format: format)
                 engine.connect(monitorMixer, to: engine.mainMixerNode, format: nil)
+                lastError = nil
             } else {
-                lastError = "input node has no format — \(inputDiagnostics)"
+                lastError = "no mic format — \(inputDiagnostics)"
             }
         } else {
+            inputIsUsable = false
             inputDiagnostics = "microphone not granted"
         }
 
@@ -316,7 +354,7 @@ final class AudioMachine: ObservableObject {
         let input = engine.inputNode
         let tapFormat = input.outputFormat(forBus: 0)
         guard tapFormat.sampleRate > 0, tapFormat.channelCount > 0 else {
-            lastError = "no input"
+            lastError = "no input · \(inputDiagnostics)"
             return nil
         }
 

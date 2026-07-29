@@ -233,7 +233,7 @@ final class DeviceState: ObservableObject {
             }
             let slot = library.newTapeURL()
             guard let format = machine.startRecording(to: slot.url) else {
-                flash(machine.lastError ?? "input error")
+                flash(machine.shortError)
                 return
             }
             pendingURL = slot.url

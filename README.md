@@ -35,7 +35,7 @@ app never asks you to visit one before you can record.
 | Reel for scrubbing and scratching | `ScratchVoice` — an interpolating read head over a 22.05 kHz mono copy of the tape, driven by signed angular velocity, so reverse works |
 | Finger on the reel stops capture | Touch-down while recording enters `recordHold`: still armed, no longer writing |
 | Reel as visual feedback | Three windows at 120° and a rim index mark, so rotation is legible; ring around the well shows position |
-| 24-bit / 96 kHz | Session asks for 96 kHz, `AVAudioFile` writes 24-bit linear PCM at whatever rate the phone actually delivers — and the machine displays the rate it *got* |
+| 24-bit / 96 kHz | 24-bit linear PCM always. The rate is negotiated: a phone runs one clock for input and output together, and the built-in mic will not follow the speaker up to 96 kHz — so the machine asks, checks whether the mic survived, and drops back to the hardware's own rate if it did not. It displays the rate it *got* |
 | 128 GB internal storage | Device storage, with free space and remaining tape time in `system` mode |
 | Memo key: one press, starts a new recording | `MemoButton`, plus `StartMemoIntent` on the Action button, Lock Screen, Control Center and Siri |
 | Mode key | Walks five display pages: `tape · level · speed · input · system` |
