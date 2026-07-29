@@ -183,10 +183,16 @@ final class AudioMachine: ObservableObject {
         let session = AVAudioSession.sharedInstance()
 
         do {
+            // Bluetooth-headset option, spelled by its raw bit. The iOS 26 SDK
+            // renamed .allowBluetooth to .allowBluetoothHFP and removed the old
+            // name from Swift; older SDKs lack the new one. The bit itself
+            // (0x4) is the same everywhere, so this is the one spelling that
+            // builds on every Xcode this project meets.
+            let allowBluetoothHFP = AVAudioSession.CategoryOptions(rawValue: 1 << 2)
             try session.setCategory(
                 .playAndRecord,
                 mode: .default,
-                options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay, .defaultToSpeaker]
+                options: [allowBluetoothHFP, .allowBluetoothA2DP, .allowAirPlay, .defaultToSpeaker]
             )
         } catch {
             lastError = "category: \(error.localizedDescription)"
