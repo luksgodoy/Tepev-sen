@@ -99,26 +99,24 @@ relationships are preserved:
 
 ## Building
 
-Requires Xcode 16 or later (the project uses synchronized folder groups, so
-files added under `tepevesen/` are picked up without editing the project file).
+**[BUILD.md](BUILD.md) is the step-by-step guide** — toolchain, signing,
+running on a device, and what to try first. The short version:
 
 ```sh
-open tepevesen.xcodeproj
-# select a device or simulator, ⌘R
+git clone https://github.com/luksgodoy/Tepev-sen.git
+cd Tepev-sen
+make build          # compiles for the simulator, no signing required
+make open           # then set your team under Signing & Capabilities, ⌘R
 ```
 
-Set your own team under **Signing & Capabilities**; the bundle identifier is
-`engineering.tepevesen.app`.
+Requires **Xcode 16 or later** — the project uses synchronized folder groups,
+so files added under `tepevesen/` are picked up without editing the project
+file, and Xcode 15 cannot open that format. `make project` regenerates a
+conventional project from `project.yml` via XcodeGen if you need one.
 
-To regenerate the project from scratch instead:
-
-```sh
-brew install xcodegen && xcodegen generate
-```
-
-**Test on a device, not the Simulator.** The Simulator has no real input route,
-no Core Haptics, and no 96 kHz hardware, so the reel, the meters and the format
-line are all meaningless there.
+**Test on a device, not the Simulator.** The Simulator has no Core Haptics, no
+Bluetooth or USB-C routes, and no 96 kHz hardware, so the reel, the jack strip
+and the format line are all meaningless there.
 
 ## Source map
 
