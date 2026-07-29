@@ -51,6 +51,9 @@ final class AudioMachine: ObservableObject {
     /// file is rejecting it. Identical symptoms, opposite fixes, so the machine
     /// distinguishes them rather than making you guess.
     @Published private(set) var stallReason: String?
+    /// What the input node actually reported when the graph was last built.
+    /// Shown in `setup` so a failure to record is diagnosable from the phone.
+    @Published private(set) var inputDiagnostics: String = ""
 
     /// Tape speed, 0.25×…4×. 1.0 is nominal.
     @Published var speed: Double = 1.0 {
@@ -74,7 +77,9 @@ final class AudioMachine: ObservableObject {
 
     // MARK: Graph
 
-    private let engine = AVAudioEngine()
+    /// Rebuilt from scratch when the microphone situation changes — see
+    /// `buildEngine`. Not a `let`, deliberately.
+    private var engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let varispeed = AVAudioUnitVarispeed()
     private let timePitch = AVAudioUnitTimePitch()
@@ -102,7 +107,102 @@ final class AudioMachine: ObservableObject {
 
     // MARK: - Lifecycle
 
+    /// Touches no audio node.
+    ///
+    /// Reaching for `engine.mainMixerNode` here would instantiate the I/O unit
+    /// under whatever category the app happens to launch with — a playback-only
+    /// one — and the input side can stay dead afterwards no matter what the
+    /// session is set to later. The graph is built in `configure()`, after the
+    /// session is live.
     init() {
+        observeInterruptions()
+    }
+
+    deinit {
+        ticker?.invalidate()
+    }
+
+    /// Bring up the session and the engine.
+    ///
+    /// Deliberately not a one-shot. The input node can only be wired once the
+    /// microphone is genuinely ours — touch it before the user has granted
+    /// access and you get a node that reports a plausible format, connects
+    /// without complaint, and then never delivers a single buffer for the rest
+    /// of the process's life. So this rebuilds itself the first time it runs
+    /// after permission changes.
+    func configure() {
+        let granted = AVAudioApplication.shared.recordPermission == .granted
+        if isConfigured && granted == configuredWithMic { return }
+
+        // Session first, every time. Only once it is live does touching a node
+        // give a truthful answer.
+        let session = activateSession()
+        buildEngine(withInput: granted)
+
+        actualSampleRate = session.sampleRate
+        actualChannels = max(1, session.inputNumberOfChannels)
+
+        // Marked configured whether or not the engine came up. Whether it is
+        // *running* is asked separately, every time it matters — conflating
+        // the two is what let a dead engine record a silent tape.
+        isConfigured = true
+        configuredWithMic = granted
+        startEngine()
+        startTicker()
+    }
+
+    /// Put the session into a recording category and activate it.
+    ///
+    /// Every call gets its own `do`. Sharing one block means a throw from any
+    /// preference skips everything after it — and `setActive` was last, so a
+    /// phone that simply declined 96 kHz ended up with a session that was never
+    /// activated at all and an input node with no format. Preferences are
+    /// requests; activation is the only line here that must happen.
+    @discardableResult
+    private func activateSession() -> AVAudioSession {
+        let session = AVAudioSession.sharedInstance()
+
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .default,
+                options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay, .defaultToSpeaker]
+            )
+        } catch {
+            lastError = "category: \(error.localizedDescription)"
+        }
+
+        // Ask for the machine's rated format. A refusal here is completely
+        // normal — the phone gives what it has and the machine reports it.
+        try? session.setPreferredSampleRate(Self.preferredSampleRate)
+        try? session.setPreferredIOBufferDuration(0.005)
+
+        do {
+            try session.setActive(true)
+        } catch {
+            lastError = "session: \(error.localizedDescription)"
+        }
+
+        return session
+    }
+
+    /// Tear the graph down and stand a new one up.
+    ///
+    /// A fresh `AVAudioEngine` rather than a rewiring, because an engine whose
+    /// I/O unit was created without record permission keeps a dead input node
+    /// for its whole life. Cheap, and it happens at most twice per launch.
+    private func buildEngine(withInput: Bool) {
+        engine.stop()
+        engine.reset()
+        for node in [player, varispeed, timePitch, monitorMixer] as [AVAudioNode]
+        where node.engine != nil {
+            engine.detach(node)
+        }
+        if let scratchNode, scratchNode.engine != nil { engine.detach(scratchNode) }
+        scratchNode = nil
+
+        engine = AVAudioEngine()
+
         engine.attach(player)
         engine.attach(varispeed)
         engine.attach(timePitch)
@@ -124,67 +224,25 @@ final class AudioMachine: ObservableObject {
         // Reel path.
         engine.connect(node, to: engine.mainMixerNode, format: stereo)
 
-        // Monitor path, wired in `configure()` once the input format is known.
-        monitorMixer.outputVolume = 0
-
-        applySpeed()
-        observeInterruptions()
-    }
-
-    deinit {
-        ticker?.invalidate()
-    }
-
-    /// Bring up the session and the engine.
-    ///
-    /// Deliberately not a one-shot. The input node can only be wired once the
-    /// microphone is genuinely ours — touch it before the user has granted
-    /// access and you get a node that reports a plausible format, connects
-    /// without complaint, and then never delivers a single buffer for the rest
-    /// of the process's life. So this rebuilds itself the first time it runs
-    /// after permission changes.
-    func configure() {
-        let granted = AVAudioApplication.shared.recordPermission == .granted
-        if isConfigured && granted == configuredWithMic { return }
-
-        if engine.isRunning { engine.stop() }
-
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(
-                .playAndRecord,
-                mode: .default,
-                options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay, .defaultToSpeaker]
-            )
-            // Ask for the machine's rated format. The phone decides what it can
-            // actually deliver, and we record at whatever that turns out to be.
-            try session.setPreferredSampleRate(Self.preferredSampleRate)
-            try session.setPreferredIOBufferDuration(0.005)
-            try session.setActive(true)
-        } catch {
-            lastError = "audio session: \(error.localizedDescription)"
-        }
-
-        if granted {
+        if withInput {
             let input = engine.inputNode
-            let inputFormat = input.inputFormat(forBus: 0)
-            if inputFormat.sampleRate > 0, inputFormat.channelCount > 0 {
-                engine.disconnectNodeOutput(input)
-                engine.connect(input, to: monitorMixer, format: inputFormat)
+            let format = input.inputFormat(forBus: 0)
+            let session = AVAudioSession.sharedInstance()
+            inputDiagnostics = "\(Int(format.sampleRate)) hz · \(format.channelCount) ch"
+                + " · session \(Int(session.sampleRate)) hz"
+                + " · input \(session.isInputAvailable ? "available" : "unavailable")"
+            if format.sampleRate > 0, format.channelCount > 0 {
+                engine.connect(input, to: monitorMixer, format: format)
                 engine.connect(monitorMixer, to: engine.mainMixerNode, format: nil)
+            } else {
+                lastError = "input node has no format — \(inputDiagnostics)"
             }
+        } else {
+            inputDiagnostics = "microphone not granted"
         }
 
-        actualSampleRate = session.sampleRate
-        actualChannels = max(1, session.inputNumberOfChannels)
-
-        // Marked configured whether or not the engine came up. Whether it is
-        // *running* is asked separately, every time it matters — conflating
-        // the two is what let a dead engine record a silent tape.
-        isConfigured = true
-        configuredWithMic = granted
-        startEngine()
-        startTicker()
+        monitorMixer.outputVolume = inputMonitoring ? 1 : 0
+        applySpeed()
     }
 
     /// Start the engine if it is not already running. Returns whether it is
@@ -223,9 +281,11 @@ final class AudioMachine: ObservableObject {
                 break
             }
         }
+        // Not scoped to `engine` — it gets replaced, and an observer bound to
+        // the old one would go quiet exactly when it was needed.
         center.addObserver(
             forName: .AVAudioEngineConfigurationChange,
-            object: engine, queue: .main
+            object: nil, queue: .main
         ) { [weak self] _ in
             self?.startEngine()
         }

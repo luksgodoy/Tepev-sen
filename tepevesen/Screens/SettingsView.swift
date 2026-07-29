@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// setup.
 ///
@@ -60,6 +61,10 @@ struct SettingsView: View {
                             row("input", device.jacks.jacks.first { $0.selected }?.detail ?? "—")
                             row("output", device.jacks.outputName)
                             note("the machine records at whatever the phone will actually give it, and tells you which that was.")
+                            if !device.machine.inputDiagnostics.isEmpty {
+                                Legend(text: device.machine.inputDiagnostics, size: 9, tracking: 0.2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
 
                         section("storage") {
@@ -77,7 +82,19 @@ struct SettingsView: View {
                         }
 
                         if let error = device.machine.lastError {
-                            section("last error") { note(error) }
+                            section("last error") {
+                                note(error)
+                                Button {
+                                    UIPasteboard.general.string = """
+                                    \(error)
+                                    \(device.machine.inputDiagnostics)
+                                    requested \(Int(AudioMachine.preferredSampleRate)) hz
+                                    """
+                                    device.flash("copied")
+                                } label: {
+                                    Legend(text: "copy", size: 11)
+                                }
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 4) {

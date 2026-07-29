@@ -248,6 +248,8 @@ you still need an Xcode new enough to ship that (15.0+).
 | Reel turns silently when scrubbed | Scrub copy still building | Wait a moment after recording — it is built off the main thread |
 | No haptics at all | Simulator, or Haptics off | Run on a device; check `setup → feel` |
 | Display shows `no mic access` | Mic permission denied | Settings → tepevësen → Microphone |
+| Display shows `no input` | The input node never produced a format | Open `tapes → setup → format`; the line under it reports what the input node and session actually said. `last error` has a **copy** button |
+| Display shows `write failed` | Audio is arriving, the file is rejecting it | Check free space in `setup → storage` |
 | `input` mode shows 48k, not 96k | The phone declined 96 kHz | Expected. Bluetooth mics drop to 16 kHz. The machine reports what it got, deliberately |
 
 ---
