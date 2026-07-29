@@ -130,9 +130,19 @@ This does not modify the project file, so it will not show up in `git status`.
 
 In the scheme selector at the top of the Xcode window, next to the ▶ button:
 
-**On your iPhone (do this).** Plug it in. Unlock it. Tap **Trust** on the
-"Trust This Computer?" prompt. Your phone's name appears in the destination
-list — pick it.
+**On your iPhone (do this).**
+
+1. Plug it in with a cable. Unlock it.
+2. Tap **Trust** on the "Trust This Computer?" prompt and enter your passcode.
+3. **Turn on Developer Mode** — required on iOS 16 and later, and installs fail
+   without it. On the phone: *Settings → Privacy & Security → Developer Mode →
+   on*, then restart the phone and confirm after it reboots. If you don't see
+   the Developer Mode row, press ⌘R in Xcode once — attempting an install is
+   what makes it appear.
+4. Your phone's name now appears in Xcode's destination list. Pick it.
+
+After the first cabled install you can go wireless: *Window → Devices and
+Simulators → your phone → **Connect via network***.
 
 **In the Simulator (only for a first look).** Pick any iPhone 16 or 15. Be
 clear about what this cannot tell you:
@@ -243,6 +253,9 @@ you still need an Xcode new enough to ship that (15.0+).
 | *"Signing for tepevesen requires a development team"* | No team selected | [§4](#4-set-your-signing-team) |
 | *"Failed to register bundle identifier"* | Someone owns that ID | Change the bundle ID — [§4](#4-set-your-signing-team) step 6 |
 | *"Unable to install… device is locked"* | Phone locked | Unlock it, ⌘R again |
+| *"…requires Developer Mode to be enabled"* | iOS 16+ blocks side-loading until you allow it | Settings → Privacy & Security → Developer Mode → on → restart |
+| Phone never appears in the destination list | Not trusted, or cable is charge-only | Unlock, re-tap **Trust**; try a different cable |
+| `no input` **in the Simulator** | The Simulator has no microphone of its own | Not a bug in the app. Run on a phone — or set Simulator menu → *I/O → Audio Input* to your Mac's mic |
 | *"Untrusted Developer"* on launch | First install, free account | Trust it — [§6](#6-build-and-run) step 1 |
 | App quits after 7 days | Free accounts expire profiles | Re-run from Xcode. A paid account lasts a year |
 | Builds, but the reel does nothing | No tape loaded | Press `memo`, record a few seconds, `stop` |
