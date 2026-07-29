@@ -121,6 +121,8 @@ final class AudioMachine: ObservableObject {
     /// How many times the tap has fired this take, regardless of what was
     /// done with the buffers.
     private var tapCallbacks = 0
+    /// Whether this take has already used its one automatic engine restart.
+    private var engineBounced = false
 
     private var ticker: Timer?
     private var meterAccumulator = (rms: 0.0, peak: 0.0)
@@ -339,7 +341,6 @@ final class AudioMachine: ObservableObject {
             lastError = "microphone access denied"
             return nil
         }
-        guard startEngine() else { return nil }
 
         let input = engine.inputNode
         let tapFormat = input.outputFormat(forBus: 0)
@@ -379,6 +380,15 @@ final class AudioMachine: ObservableObject {
         inputStalled = false
         stallReason = nil
 
+        // Stop the engine before the tap goes on, start it after. The engine
+        // idles from power-on, and a tap grafted onto a long-running I/O unit
+        // can be silently ignored — the input render path was negotiated
+        // without it, every diagnostic reads healthy, and not one buffer ever
+        // arrives. Bringing the engine up with the tap already in place is
+        // the order that delivers.
+        engine.stop()
+        engineBounced = false
+
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
@@ -391,6 +401,12 @@ final class AudioMachine: ObservableObject {
             } catch {
                 DispatchQueue.main.async { self.lastError = "write: \(error.localizedDescription)" }
             }
+        }
+
+        guard startEngine() else {
+            input.removeTap(onBus: 0)
+            writeFile = nil
+            return nil
         }
 
         actualSampleRate = tapFormat.sampleRate
@@ -696,6 +712,15 @@ final class AudioMachine: ObservableObject {
             // them. No buffers at all means no input.
             if recordedFrames == 0 {
                 silentTicks += 1
+                // A third of a second armed with nothing arriving: bounce the
+                // engine once, with the tap still in place. Taps survive a
+                // stop/start, and coming up fresh re-negotiates the input
+                // render path with the tap included.
+                if silentTicks == 10, !engineBounced {
+                    engineBounced = true
+                    engine.stop()
+                    startEngine()
+                }
                 if silentTicks > 20, !inputStalled {
                     inputStalled = true
                     stallReason = tapCallbacks == 0 ? "no input" : "write failed"
