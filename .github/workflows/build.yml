@@ -1,0 +1,48 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: xcodebuild (iOS Simulator)
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # The project uses Xcode 16 synchronized folder groups. If it fails to
+      # open, regenerate from project.yml instead of guessing at the pbxproj.
+      - name: List schemes
+        run: xcodebuild -project tepevesen.xcodeproj -list
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project tepevesen.xcodeproj \
+            -scheme tepevesen \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            | tee /tmp/build.log
+
+      - name: Warnings
+        if: always()
+        run: |
+          if [ -f /tmp/build.log ]; then
+            grep -E "warning:" /tmp/build.log | sort -u | head -60 || echo "no warnings"
+          fi
