@@ -79,9 +79,17 @@ final class AudioMachine: ObservableObject {
 
     // MARK: Requested format
 
-    /// What the hardware asks for. 24-bit / 96 kHz, same as the machine this
-    /// is a version of.
-    static let preferredSampleRate: Double = 96_000
+    /// 48 kHz, and this number is the product of every recording bug this
+    /// machine has had.
+    ///
+    /// The hardware this is a version of records at 96 kHz through its own
+    /// converters. No iPhone microphone records at 96 kHz — and a phone runs
+    /// one clock for input and output together, so *asking* for 96 detaches
+    /// the mic from the session and the machine cannot record at all. The
+    /// spec number was cosplay; a recorder's actual spec is that pressing
+    /// record records. 48 kHz / 24-bit is the most this platform's microphone
+    /// honestly does, and it is what the machine claims.
+    static let preferredSampleRate: Double = 48_000
     static let bitDepth: Int = 24
 
     // MARK: Graph
@@ -109,9 +117,6 @@ final class AudioMachine: ObservableObject {
     /// The input node came back with a real format the last time the graph was
     /// built. Drives the sample-rate fallback in `configure`.
     private var inputIsUsable = false
-    /// The mic could not follow the machine's rated rate on this device, so we
-    /// stop asking for it. Sticky for the life of the process.
-    private var highRateRejected = false
     private var silentTicks = 0
     /// How many times the tap has fired this take, regardless of what was
     /// done with the buffers.
@@ -151,26 +156,8 @@ final class AudioMachine: ObservableObject {
 
         // Session first, every time. Only once it is live does touching a node
         // give a truthful answer.
-        var session = activateSession(preferredRate: highRateRejected ? nil : Self.preferredSampleRate)
+        let session = activateSession()
         buildEngine(withInput: granted)
-
-        // The rate is a negotiation, not a demand.
-        //
-        // A phone runs one clock for input and output together. The speaker
-        // will happily go to 96 kHz; the built-in mic will not, and asking
-        // anyway takes the whole session somewhere the microphone cannot
-        // follow — the input node comes back with no format at all and the
-        // machine cannot record. So: ask high, check whether the mic survived,
-        // and if it did not, drop the request and rebuild at whatever rate the
-        // hardware runs at on its own.
-        if granted, !inputIsUsable, !highRateRejected {
-            highRateRejected = true
-            let attempted = Int(Self.preferredSampleRate / 1000)
-            try? AVAudioSession.sharedInstance().setActive(false)
-            session = activateSession(preferredRate: nil)
-            buildEngine(withInput: true)
-            inputDiagnostics = "\(attempted)k refused by the mic · \(inputDiagnostics)"
-        }
 
         actualSampleRate = session.sampleRate
         actualChannels = max(1, session.inputNumberOfChannels)
@@ -188,14 +175,11 @@ final class AudioMachine: ObservableObject {
     ///
     /// Every call gets its own `do`. Sharing one block means a throw from any
     /// preference skips everything after it — and `setActive` was last, so a
-    /// phone that simply declined a rate ended up with a session that was never
-    /// activated at all. Preferences are requests; activation is the only line
-    /// here that must happen.
-    ///
-    /// `preferredRate: nil` clears the request and lets the hardware run at its
-    /// own clock, which is the only setting guaranteed to keep the mic alive.
+    /// phone that declined a preference once ended up with a session that was
+    /// never activated at all. Preferences are requests; activation is the
+    /// only line here that must happen.
     @discardableResult
-    private func activateSession(preferredRate: Double?) -> AVAudioSession {
+    private func activateSession() -> AVAudioSession {
         let session = AVAudioSession.sharedInstance()
 
         do {
@@ -208,8 +192,8 @@ final class AudioMachine: ObservableObject {
             lastError = "category: \(error.localizedDescription)"
         }
 
-        // 0 removes the preference entirely.
-        try? session.setPreferredSampleRate(preferredRate ?? 0)
+        // The mic's own rate — a preference it can always satisfy.
+        try? session.setPreferredSampleRate(Self.preferredSampleRate)
         try? session.setPreferredIOBufferDuration(0.005)
 
         do {

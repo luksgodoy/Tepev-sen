@@ -35,7 +35,7 @@ app never asks you to visit one before you can record.
 | Reel for scrubbing and scratching | `ScratchVoice` — an interpolating read head over a 22.05 kHz mono copy of the tape, driven by signed angular velocity, so reverse works |
 | Finger on the reel stops capture | Touch-down while recording enters `recordHold`: still armed, no longer writing |
 | Reel as visual feedback | Three windows at 120° and a rim index mark, so rotation is legible; ring around the well shows position |
-| 24-bit / 96 kHz | 24-bit linear PCM always. The rate is negotiated: a phone runs one clock for input and output together, and the built-in mic will not follow the speaker up to 96 kHz — so the machine asks, checks whether the mic survived, and drops back to the hardware's own rate if it did not. It displays the rate it *got* |
+| 24-bit / 96 kHz | 24-bit linear PCM at 48 kHz — **deliberately not 96**. No iPhone microphone records at 96 kHz, and because a phone runs one clock for input and output, even *asking* for 96 detaches the mic from the session. The machine claims what the platform honestly does, and displays the rate it got |
 | 128 GB internal storage | Device storage, with free space and remaining tape time in `system` mode |
 | Memo key: one press, starts a new recording | `MemoButton`, plus `StartMemoIntent` on the Action button, Lock Screen, Control Center and Siri |
 | Mode key | Walks five display pages: `tape · level · speed · input · system` |
@@ -164,9 +164,10 @@ tepevesen/
 - Scrub audio is 22.05 kHz mono by design. Full-rate playback streams from
   disk; only the reel's read head is lo-fi, the same way dragging tape across a
   head is.
-- 96 kHz is a request, not a promise. Bluetooth inputs in particular will hand
-  back 16 kHz, and the machine displays that rather than the number it asked
-  for.
+- The machine records at 48 kHz / 24-bit, not the hardware's 96 kHz. That is a
+  floor set by the iPhone's microphone, not by this code — and requesting more
+  than the mic can do silently disables it, which is a worse trade than the
+  rate. The display reports the rate actually captured.
 - **Compiled, not yet run.** CI builds the app clean for the iOS Simulator on
   every push — zero errors, zero warnings — but nothing here has been launched
   on a device, so no runtime behaviour is verified. The reel physics, the

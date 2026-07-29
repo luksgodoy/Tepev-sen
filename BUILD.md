@@ -151,7 +151,7 @@ clear about what this cannot tell you:
 |---|---|---|
 | Layout, display, waveforms | ✅ | ✅ |
 | Recording | ⚠️ via your Mac's mic, 48 kHz | ✅ |
-| 96 kHz / 24-bit | ❌ | ✅ |
+| 48 kHz / 24-bit capture | ⚠️ Mac mic decides | ✅ |
 | Haptics — reel detents, key clicks, motor hum | ❌ silent | ✅ |
 | Jack strip / route switching | ❌ shows internal only | ✅ |
 | Bluetooth, USB-C audio | ❌ | ✅ |
@@ -264,7 +264,7 @@ you still need an Xcode new enough to ship that (15.0+).
 | Display shows `no mic access` | Mic permission denied | Settings → tepevësen → Microphone |
 | Display shows `no input` | The input node never produced a format | Open `tapes → setup → format`; the line under it reports what the input node and session actually said. `last error` has a **copy** button |
 | Display shows `write failed` | Audio is arriving, the file is rejecting it | Check free space in `setup → storage` |
-| `input` mode shows 48k, not 96k | The phone declined 96 kHz | Expected. Bluetooth mics drop to 16 kHz. The machine reports what it got, deliberately |
+| `input` mode shows 48k | That is the machine's rate — 96 kHz is not asked for, because no iPhone mic can do it and asking disables the mic | Working as designed |
 
 ---
 

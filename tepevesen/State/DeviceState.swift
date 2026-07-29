@@ -194,10 +194,19 @@ final class DeviceState: ObservableObject {
     // MARK: Power-on
 
     func powerOn() {
-        machine.configure()
-        jacks.refresh()
-        library.refreshStorage()
-        if let tape = library.selected { loadForPlayback(tape) }
+        // The microphone is asked for at power-on, not mid-first-take. A field
+        // recorder that boots without its mic is not booted — and every graph
+        // this app builds before the answer is known has to be torn down and
+        // rebuilt afterwards, which is where its worst bugs have lived. By the
+        // time memo is pressed, the answer exists and the graph was built
+        // around it once.
+        Task {
+            _ = await requestMicrophone()
+            machine.configure()
+            jacks.refresh()
+            library.refreshStorage()
+            if let tape = library.selected { loadForPlayback(tape) }
+        }
     }
 
     // MARK: - Memo
