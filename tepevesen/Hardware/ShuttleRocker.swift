@@ -106,12 +106,15 @@ struct ShuttleRocker: View {
         device.shuttleBegan(forward: s == .forward)
 
         ticker?.invalidate()
+        // Added to the main run loop below, so this fires on the main thread.
         let t = Timer(timeInterval: 0.15, repeats: true) { _ in
-            guard let pressedAt, let side else { return }
-            device.shuttleHeld(
-                forward: side == .forward,
-                seconds: Date().timeIntervalSince(pressedAt)
-            )
+            MainActor.assumeIsolated {
+                guard let pressedAt, let side else { return }
+                device.shuttleHeld(
+                    forward: side == .forward,
+                    seconds: Date().timeIntervalSince(pressedAt)
+                )
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         ticker = t

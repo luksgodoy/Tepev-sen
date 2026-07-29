@@ -516,7 +516,10 @@ final class AudioMachine: ObservableObject {
     private static func normalize(_ amplitude: Float) -> Float {
         guard amplitude > 0.0001 else { return 0 }
         let db = 20 * log10(amplitude)
-        return Float(((db + 54) / 54).clamped(to: 0...1))
+        // Written out rather than via `clamped`: the stdlib has a
+        // package-protected `clamped` on Float that wins overload resolution
+        // and is then unusable.
+        return min(max((db + 54) / 54, 0), 1)
     }
 
     // MARK: - Tick
