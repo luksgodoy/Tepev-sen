@@ -183,6 +183,12 @@ final class AudioMachine: ObservableObject {
             lastError = "session: \(error.localizedDescription)"
         }
 
+        // One input, pinned. `availableInputs` only answers truthfully once the
+        // session is active, so this has to come after activation.
+        if let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+            try? session.setPreferredInput(builtIn)
+        }
+
         return session
     }
 

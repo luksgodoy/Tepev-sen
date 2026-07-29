@@ -193,8 +193,9 @@ Work down it in order.
 8. **Press `mode` five times.** `tape → level → speed → input → system` and
    back around. Watch `level` while you talk — the meters should move and
    invert on clipping.
-9. **Plug in headphones.** The `1/8` socket on the jack strip should fill.
-   Connect AirPods — `bt` should fill.
+9. **Connect headphones or AirPods.** The `out` socket should fill, and
+   `mode → input` should name them on the `→` line. The `mic` socket stays lit
+   throughout — the input is the built-in mic and does not change.
 10. **Press `text`, pick a language, transcribe.** Then tap any word to seek
     to it.
 

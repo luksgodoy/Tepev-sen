@@ -143,27 +143,16 @@ extension DeviceState {
     // MARK: input
 
     private func drawInput(_ d: inout DotBitmap) {
-        let selected = jacks.jacks.first { $0.selected } ?? jacks.jacks[0]
-        let name = selected.detail.isEmpty ? selected.id.legend : selected.detail
-        d.text(name, y: 9, size: 10, align: .center)
+        // One input, so this page states it rather than offering it.
+        d.text(jacks.inputAvailable ? jacks.inputName : "no input", y: 9, size: 10, align: .center)
 
         let rate = jacks.inputSampleRate
         let k = rate >= 1000 ? String(format: "%.4g", rate / 1000) + "k" : "\(Int(rate))"
         let ch = jacks.inputChannels >= 2 ? "st" : "mo"
-        d.text("\(k) · \(AudioMachine.bitDepth)b · \(ch)", y: 20, size: 8, align: .center)
+        d.text("\(k) · \(AudioMachine.bitDepth)b · \(ch)", y: 19, size: 8, align: .center)
 
-        // Four sockets along the bottom: filled means something is in it,
-        // outlined with a dot means that is the one we are listening to.
-        let n = JackID.allCases.count
-        for (i, jack) in jacks.jacks.enumerated() {
-            let x = 6 + i * (52 / max(n - 1, 1))
-            if jack.connected {
-                d.disc(cx: x, cy: 29, r: 2)
-            } else {
-                d.ring(cx: x, cy: 29, r: 2)
-            }
-            if jack.selected { d.hLine(x: x - 2, y: 31, w: 5) }
-        }
+        // Where it is going, which is the only part of the path that moves.
+        d.text("→ \(jacks.outputName)", y: 27, size: 8, align: .center)
     }
 
     // MARK: system

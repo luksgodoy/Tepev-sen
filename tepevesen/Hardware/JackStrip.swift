@@ -1,43 +1,52 @@
 import SwiftUI
 
-/// The connector edge.
+/// The connector edge, reduced to what is true.
 ///
-/// The hardware puts three two-way 3.5 mm jacks and a 1/4" output along one
-/// edge, and the reason it can get away with that many is that every one of
-/// them is visibly either plugged in or not. This strip keeps that promise: a
-/// socket is filled when the route behind it genuinely exists, and tapping a
-/// two-way socket patches the input to it. Nothing here is decorative.
+/// Two sockets, neither of them a choice: the input, which is always the
+/// built-in mic, and the output, which follows whatever you are listening on.
+/// A row of sockets you cannot select would be decoration, and there is no
+/// decoration on this machine — so the ones that remain are readouts, and they
+/// are readouts of things that actually change.
 struct JackStrip: View {
     @EnvironmentObject private var device: DeviceState
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(device.jacks.jacks) { jack in
-                Socket(jack: jack)
-                    .frame(maxWidth: .infinity)
-                    .onTapGesture {
-                        guard jack.id.isTwoWay else {
-                            device.flash(jack.detail.isEmpty ? "out" : jack.detail)
-                            return
-                        }
-                        guard jack.connected else {
-                            device.flash("nothing in \(jack.id.legend)")
-                            return
-                        }
-                        device.jacks.select(jack.id)
-                        device.haptics.detent()
-                        device.flash(jack.detail.isEmpty ? jack.id.legend : jack.detail)
-                    }
+            Socket(
+                legend: "mic",
+                detail: device.jacks.inputName,
+                filled: device.jacks.inputAvailable,
+                lit: true,
+                diameter: 17
+            )
+            .frame(maxWidth: .infinity)
+            .onTapGesture {
+                device.flash(device.jacks.inputAvailable ? "built-in mic" : "no input")
             }
+
+            Socket(
+                legend: "out",
+                detail: device.jacks.outputName,
+                filled: device.jacks.outputIsExternal,
+                lit: false,
+                diameter: 22
+            )
+            .frame(maxWidth: .infinity)
+            .onTapGesture { device.flash(device.jacks.outputName) }
         }
     }
 }
 
 private struct Socket: View {
     @Environment(\.finish) private var finish
-    let jack: JackStatus
 
-    private var diameter: CGFloat { jack.id == .monitorOut ? 22 : 17 }
+    let legend: String
+    let detail: String
+    /// Something is in it.
+    let filled: Bool
+    /// This is the live path.
+    let lit: Bool
+    let diameter: CGFloat
 
     var body: some View {
         let p = TE.palette(finish)
@@ -65,8 +74,7 @@ private struct Socket: View {
                         )
                     }
 
-                // The tip of a plug, when there is one.
-                if jack.connected {
+                if filled {
                     Circle()
                         .fill(
                             LinearGradient(
@@ -77,8 +85,7 @@ private struct Socket: View {
                         .frame(width: diameter * 0.46, height: diameter * 0.46)
                 }
 
-                // The selected input carries the one lit ring on the machine.
-                if jack.selected {
+                if lit {
                     Circle()
                         .strokeBorder(TE.live.opacity(0.85), lineWidth: 1.4)
                         .frame(width: diameter + 6, height: diameter + 6)
@@ -86,15 +93,11 @@ private struct Socket: View {
             }
             .frame(height: 28)
 
-            Legend(text: jack.id.legend, size: 7, tracking: 0.6)
+            Legend(text: legend, size: 7, tracking: 0.6)
         }
         .contentShape(Rectangle())
         .accessibilityElement()
-        .accessibilityLabel("\(jack.id.legend) jack")
-        .accessibilityValue(
-            jack.connected
-                ? (jack.detail.isEmpty ? "connected" : jack.detail)
-                : "empty"
-        )
+        .accessibilityLabel("\(legend) jack")
+        .accessibilityValue(detail)
     }
 }

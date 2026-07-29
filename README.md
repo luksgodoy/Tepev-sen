@@ -42,7 +42,7 @@ app never asks you to visit one before you can record.
 | Side rocker: press up to run forward, down to rewind | `ShuttleRocker`, winding up 2× → 4× → 8× while held |
 | Tape speed | 0.25×–4×, pitch following speed by default (`AVAudioUnitVarispeed`), pitch-lock optional (`AVAudioUnitTimePitch`) |
 | 64 × 32 monochrome display | A real 2048-dot bilevel panel — glyphs are rasterised through Core Graphics with antialiasing off and thresholded, so any script renders |
-| 3× two-way 3.5 mm jacks + 1× 1/4" out | `JackStrip` bound to live `AVAudioSession` routes: internal, wired/USB-C, Bluetooth, monitor out. A socket fills only when the route genuinely exists; tapping a two-way socket patches the input |
+| 3× two-way 3.5 mm jacks + 1× 1/4" out | **Deliberately not carried over.** One input, the built-in mic, pinned in the session so a headset cannot become the source mid-take. `JackStrip` is two readouts — `mic` and `out` — and `out` follows the live `AVAudioSession` route |
 | USB-C · MFi · Bluetooth | Route selection and monitoring through the audio session |
 | Transcription in most languages, via the app | `SFSpeechRecognizer` over every locale the phone supports, forced on-device wherever available, with each word a tappable seek point |
 | Brushed aluminum and black anodized bodies | Both finishes, in `setup` |

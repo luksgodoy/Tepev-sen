@@ -58,7 +58,7 @@ struct SettingsView: View {
                         section("format") {
                             row("requested", "\(Int(AudioMachine.preferredSampleRate / 1000))k · \(AudioMachine.bitDepth) bit")
                             row("actual", actualFormat)
-                            row("input", device.jacks.jacks.first { $0.selected }?.detail ?? "—")
+                            row("input", device.jacks.inputName)
                             row("output", device.jacks.outputName)
                             note("the machine records at whatever the phone will actually give it, and tells you which that was.")
                             if !device.machine.inputDiagnostics.isEmpty {

@@ -2,65 +2,41 @@ import Foundation
 import AVFoundation
 import Combine
 
-/// The hardware carries three two-way 3.5 mm jacks and one 1/4" output. A
-/// phone has no jacks, but it has exactly the same idea: a set of physical
-/// paths audio can arrive on and leave by, each of which is either plugged in
-/// or it is not.
+/// The machine has one input, and it is the built-in microphone.
 ///
-/// So the jack strip is not a drawing. Each jack is bound to a real route, it
-/// lights when that route is genuinely available, and tapping it selects it.
-enum JackID: String, CaseIterable, Identifiable, Codable {
-    /// The machine's own mic and speaker — the jack that is always plugged in.
-    case internalIO
-    /// Anything on the wire: headset, lavalier, USB-C interface.
-    case wired
-    /// Bluetooth, either A2DP out or a headset with a mic.
-    case bluetooth
-    /// The 1/4" monitor out — where the machine is currently listening back.
-    case monitorOut
-
-    var id: String { rawValue }
-
-    /// Silkscreen legend, in the hardware's lowercase.
-    var legend: String {
-        switch self {
-        case .internalIO: return "int"
-        case .wired:      return "1/8"
-        case .bluetooth:  return "bt"
-        case .monitorOut: return "1/4"
-        }
-    }
-
-    /// Two-way jacks carry signal in both directions; the 1/4" is out only.
-    var isTwoWay: Bool { self != .monitorOut }
-}
-
-struct JackStatus: Identifiable, Equatable {
-    let id: JackID
-    var connected: Bool
-    var selected: Bool
-    /// What is actually on the other end, e.g. "usb-c", "airpods pro".
-    var detail: String
-}
-
-/// Watches the audio session and keeps the jack strip truthful.
+/// The hardware carries three two-way jacks because it is a box on a desk with
+/// room for them. A phone has one microphone worth pointing at something, so
+/// offering a choice would mean offering a way to get it wrong — an input
+/// silently changing mid-take because a headset was plugged in is the kind of
+/// failure you only discover afterwards. The input is pinned, and the machine
+/// says so rather than pretending there is a decision to make.
+///
+/// The *output* still moves around, because that is the listener's business and
+/// changing it costs nothing. So this reports where sound is going, and where
+/// it is coming from is a constant.
 @MainActor
 final class JackPanel: ObservableObject {
-    @Published private(set) var jacks: [JackStatus] = JackID.allCases.map {
-        JackStatus(id: $0, connected: $0 == .internalIO, selected: $0 == .internalIO, detail: "")
-    }
 
-    /// Sample rate and channel count the hardware is really giving us. The
-    /// machine claims nothing it is not currently doing.
+    /// Always the built-in mic. Named for the display.
+    let inputName = "built-in mic"
+
+    /// Sample rate and channel count the hardware is really giving us.
     @Published private(set) var inputSampleRate: Double = 0
     @Published private(set) var inputChannels: Int = 0
+
+    /// Where playback is currently going — speaker, headphones, a pair of
+    /// AirPods by name.
     @Published private(set) var outputName: String = "speaker"
+    /// True when something other than the machine's own speaker is listening.
+    @Published private(set) var outputIsExternal: Bool = false
+    /// False when iOS reports no usable input at all, which is worth saying
+    /// out loud rather than discovering at the end of a take.
+    @Published private(set) var inputAvailable: Bool = true
 
     private var observers: [NSObjectProtocol] = []
 
     init() {
-        let center = NotificationCenter.default
-        observers.append(center.addObserver(
+        observers.append(NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
@@ -71,88 +47,29 @@ final class JackPanel: ObservableObject {
 
     func refresh() {
         let session = AVAudioSession.sharedInstance()
-        let route = session.currentRoute
-        let available = session.availableInputs ?? []
-        let selectedInput = session.preferredInput ?? available.first { $0.uid == route.inputs.first?.uid }
+
+        // Re-pin every time the route changes. Plugging in a headset must not
+        // move the source out from under a running take.
+        pinToBuiltInMic()
 
         inputSampleRate = session.sampleRate
         inputChannels = session.inputNumberOfChannels
-        outputName = route.outputs.first?.portName.lowercased() ?? "speaker"
+        inputAvailable = session.isInputAvailable
 
-        func port(matching kinds: Set<AVAudioSession.Port>) -> AVAudioSessionPortDescription? {
-            available.first { kinds.contains($0.portType) }
-        }
-
-        let wiredKinds: Set<AVAudioSession.Port> = [.headsetMic, .usbAudio, .lineIn, .carAudio]
-        let btKinds: Set<AVAudioSession.Port> = [.bluetoothHFP, .bluetoothLE]
-
-        let wiredPort = port(matching: wiredKinds)
-        let btPort = port(matching: btKinds)
-        let outPorts = route.outputs
-        let wiredOutKinds: Set<AVAudioSession.Port> = [.headphones, .usbAudio, .lineOut, .carAudio]
-        let btOutKinds: Set<AVAudioSession.Port> = [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP, .airPlay]
-        let wiredOutPort = outPorts.first { wiredOutKinds.contains($0.portType) }
-        let btOutPort = outPorts.first { btOutKinds.contains($0.portType) }
-
-        jacks = JackID.allCases.map { id in
-            switch id {
-            case .internalIO:
-                return JackStatus(
-                    id: id,
-                    connected: true,
-                    selected: selectedInput?.portType == .builtInMic || selectedInput == nil,
-                    detail: "mic + speaker"
-                )
-            case .wired:
-                return JackStatus(
-                    id: id,
-                    connected: wiredPort != nil || wiredOutPort != nil,
-                    selected: wiredKinds.contains(selectedInput?.portType ?? .builtInMic),
-                    detail: (wiredPort?.portName ?? wiredOutPort?.portName ?? "").lowercased()
-                )
-            case .bluetooth:
-                return JackStatus(
-                    id: id,
-                    connected: btPort != nil || btOutPort != nil,
-                    selected: btKinds.contains(selectedInput?.portType ?? .builtInMic),
-                    detail: (btPort?.portName ?? btOutPort?.portName ?? "").lowercased()
-                )
-            case .monitorOut:
-                return JackStatus(
-                    id: id,
-                    connected: true,
-                    selected: false,
-                    detail: outputName
-                )
-            }
-        }
+        let outputs = session.currentRoute.outputs
+        outputName = outputs.first?.portName.lowercased() ?? "speaker"
+        outputIsExternal = outputs.contains { $0.portType != .builtInSpeaker }
     }
 
-    /// Patch the input to a jack. Two-way jacks only — you cannot record from
-    /// an output, on this machine or any other.
-    func select(_ id: JackID) {
-        guard id.isTwoWay else { return }
+    /// Force the session's input to the built-in microphone.
+    ///
+    /// `availableInputs` is only meaningful once the session is active, so this
+    /// is a no-op before then and is called again on every route change.
+    func pinToBuiltInMic() {
         let session = AVAudioSession.sharedInstance()
-        let available = session.availableInputs ?? []
-
-        let wanted: AVAudioSessionPortDescription?
-        switch id {
-        case .internalIO:
-            wanted = available.first { $0.portType == .builtInMic }
-        case .wired:
-            wanted = available.first {
-                [.headsetMic, .usbAudio, .lineIn, .carAudio].contains($0.portType)
-            }
-        case .bluetooth:
-            wanted = available.first {
-                [.bluetoothHFP, .bluetoothLE].contains($0.portType)
-            }
-        case .monitorOut:
-            wanted = nil
-        }
-
-        guard let wanted else { return }
-        try? session.setPreferredInput(wanted)
-        refresh()
+        guard let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }),
+              session.preferredInput?.uid != builtIn.uid
+        else { return }
+        try? session.setPreferredInput(builtIn)
     }
 }
