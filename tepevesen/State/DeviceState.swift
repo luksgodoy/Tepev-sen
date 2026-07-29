@@ -246,6 +246,9 @@ final class DeviceState: ObservableObject {
     }
 
     private func finishRecording() {
+        // Read before stopping — stopRecording clears them.
+        let stalled = machine.inputStalled
+        let stallReason = machine.stallReason
         let duration = machine.stopRecording()
         haptics.transport(.stop)
         guard let url = pendingURL, let fileName = pendingFileName else { return }
@@ -253,9 +256,11 @@ final class DeviceState: ObservableObject {
         pendingFileName = nil
 
         guard duration > 0.25 else {
-            // Too short to be a thought. Throw it away rather than clutter the reel.
+            // Too short to be a thought. Throw it away rather than clutter the
+            // reel — but never call a dead input "too short", which is the one
+            // message that sends you looking in the wrong place entirely.
             try? FileManager.default.removeItem(at: url)
-            flash("too short")
+            flash(stalled ? (stallReason ?? "no input") : "too short")
             return
         }
 

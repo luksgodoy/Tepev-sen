@@ -77,6 +77,18 @@ extension DeviceState {
     // MARK: tape
 
     private func drawTape(_ d: inout DotBitmap) {
+        // Armed with nothing coming in. Say so, loudly, instead of showing a
+        // counter that implies a tape is being written.
+        if machine.inputStalled, machine.isRecording {
+            let reason = machine.stallReason ?? "no input"
+            d.text(reason, y: 10, size: 12, weight: .semibold, align: .center)
+            d.text(
+                reason == "no input" ? "check mic access" : "tape not writable",
+                y: 24, size: 8, align: .center
+            )
+            return
+        }
+
         let elapsed = machine.isRecording ? machine.recordedDuration : machine.position
         d.text(TimeCode.counter(elapsed), y: 9, size: 12, weight: .medium, align: .center)
 

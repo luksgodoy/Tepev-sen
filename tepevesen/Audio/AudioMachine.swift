@@ -42,6 +42,15 @@ final class AudioMachine: ObservableObject {
     @Published private(set) var actualSampleRate: Double = 0
     @Published private(set) var actualChannels: Int = 0
     @Published private(set) var lastError: String?
+    /// Armed, but no audio is arriving. A recorder that looks like it is
+    /// recording and is not is the worst thing this app could do, so this is
+    /// surfaced on the display rather than discovered afterwards.
+    @Published private(set) var inputStalled = false
+    /// Why it stalled. "no input" means the tap was never called at all — the
+    /// engine or the microphone. "write failed" means audio is arriving and the
+    /// file is rejecting it. Identical symptoms, opposite fixes, so the machine
+    /// distinguishes them rather than making you guess.
+    @Published private(set) var stallReason: String?
 
     /// Tape speed, 0.25×…4×. 1.0 is nominal.
     @Published var speed: Double = 1.0 {
@@ -81,6 +90,12 @@ final class AudioMachine: ObservableObject {
     private var capturePaused = false
     private var recordedFrames: AVAudioFramePosition = 0
     private var isConfigured = false
+    /// Whether the graph standing right now was built with microphone access.
+    private var configuredWithMic = false
+    private var silentTicks = 0
+    /// How many times the tap has fired this take, regardless of what was
+    /// done with the buffers.
+    private var tapCallbacks = 0
 
     private var ticker: Timer?
     private var meterAccumulator = (rms: 0.0, peak: 0.0)
@@ -120,9 +135,19 @@ final class AudioMachine: ObservableObject {
         ticker?.invalidate()
     }
 
-    /// Bring up the session and the engine. Safe to call repeatedly.
+    /// Bring up the session and the engine.
+    ///
+    /// Deliberately not a one-shot. The input node can only be wired once the
+    /// microphone is genuinely ours — touch it before the user has granted
+    /// access and you get a node that reports a plausible format, connects
+    /// without complaint, and then never delivers a single buffer for the rest
+    /// of the process's life. So this rebuilds itself the first time it runs
+    /// after permission changes.
     func configure() {
-        guard !isConfigured else { return }
+        let granted = AVAudioApplication.shared.recordPermission == .granted
+        if isConfigured && granted == configuredWithMic { return }
+
+        if engine.isRunning { engine.stop() }
 
         let session = AVAudioSession.sharedInstance()
         do {
@@ -140,31 +165,40 @@ final class AudioMachine: ObservableObject {
             lastError = "audio session: \(error.localizedDescription)"
         }
 
-        let input = engine.inputNode
-        let inputFormat = input.inputFormat(forBus: 0)
-        if inputFormat.sampleRate > 0 {
-            engine.connect(input, to: monitorMixer, format: inputFormat)
-            engine.connect(monitorMixer, to: engine.mainMixerNode, format: nil)
+        if granted {
+            let input = engine.inputNode
+            let inputFormat = input.inputFormat(forBus: 0)
+            if inputFormat.sampleRate > 0, inputFormat.channelCount > 0 {
+                engine.disconnectNodeOutput(input)
+                engine.connect(input, to: monitorMixer, format: inputFormat)
+                engine.connect(monitorMixer, to: engine.mainMixerNode, format: nil)
+            }
         }
 
         actualSampleRate = session.sampleRate
         actualChannels = max(1, session.inputNumberOfChannels)
 
-        engine.prepare()
-        do {
-            try engine.start()
-            isConfigured = true
-        } catch {
-            lastError = "engine: \(error.localizedDescription)"
-        }
-
+        // Marked configured whether or not the engine came up. Whether it is
+        // *running* is asked separately, every time it matters — conflating
+        // the two is what let a dead engine record a silent tape.
+        isConfigured = true
+        configuredWithMic = granted
+        startEngine()
         startTicker()
     }
 
-    private func restartEngineIfNeeded() {
-        guard isConfigured, !engine.isRunning else { return }
-        do { try engine.start() } catch {
-            lastError = "engine restart: \(error.localizedDescription)"
+    /// Start the engine if it is not already running. Returns whether it is
+    /// running when this call returns — callers are expected to check.
+    @discardableResult
+    private func startEngine() -> Bool {
+        if engine.isRunning { return true }
+        engine.prepare()
+        do {
+            try engine.start()
+            return true
+        } catch {
+            lastError = "engine: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -184,7 +218,7 @@ final class AudioMachine: ObservableObject {
                 self.pause()
             case .ended:
                 try? AVAudioSession.sharedInstance().setActive(true)
-                self.restartEngineIfNeeded()
+                self.startEngine()
             @unknown default:
                 break
             }
@@ -193,7 +227,7 @@ final class AudioMachine: ObservableObject {
             forName: .AVAudioEngineConfigurationChange,
             object: engine, queue: .main
         ) { [weak self] _ in
-            self?.restartEngineIfNeeded()
+            self?.startEngine()
         }
     }
 
@@ -203,11 +237,19 @@ final class AudioMachine: ObservableObject {
     @discardableResult
     func startRecording(to url: URL) -> (sampleRate: Double, channels: Int)? {
         configure()
-        restartEngineIfNeeded()
+
+        // Refuse to arm unless the engine is genuinely running and the input
+        // genuinely has a format. Arming anyway is how you end up holding a
+        // recorder that shows a running counter over an empty file.
+        guard AVAudioApplication.shared.recordPermission == .granted else {
+            lastError = "microphone access denied"
+            return nil
+        }
+        guard startEngine() else { return nil }
 
         let input = engine.inputNode
         let tapFormat = input.outputFormat(forBus: 0)
-        guard tapFormat.sampleRate > 0 else {
+        guard tapFormat.sampleRate > 0, tapFormat.channelCount > 0 else {
             lastError = "no input"
             return nil
         }
@@ -238,10 +280,15 @@ final class AudioMachine: ObservableObject {
 
         capturePaused = false
         recordedFrames = 0
+        tapCallbacks = 0
+        silentTicks = 0
+        inputStalled = false
+        stallReason = nil
 
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
+            self.tapCallbacks += 1
             self.measure(buffer)
             guard !self.capturePaused, let file = self.writeFile else { return }
             do {
@@ -268,6 +315,10 @@ final class AudioMachine: ObservableObject {
         capturePaused = false
         recordedFrames = 0
         recordedDuration = 0
+        silentTicks = 0
+        tapCallbacks = 0
+        inputStalled = false
+        stallReason = nil
         transport = .stopped
         level = 0
         peak = 0
@@ -313,7 +364,7 @@ final class AudioMachine: ObservableObject {
 
     func play() {
         guard playFile != nil else { return }
-        restartEngineIfNeeded()
+        guard startEngine() else { return }
         if case .paused = transport {
             player.play()
         } else {
@@ -546,6 +597,20 @@ final class AudioMachine: ObservableObject {
             position = currentTime()
         case .recording:
             recordedDuration = Double(recordedFrames) / max(actualSampleRate, 1)
+            // Two thirds of a second of armed silence is not a quiet room —
+            // a live input delivers buffers whether or not there is sound in
+            // them. No buffers at all means no input.
+            if recordedFrames == 0 {
+                silentTicks += 1
+                if silentTicks > 20, !inputStalled {
+                    inputStalled = true
+                    stallReason = tapCallbacks == 0 ? "no input" : "write failed"
+                }
+            } else if silentTicks != 0 || inputStalled {
+                silentTicks = 0
+                inputStalled = false
+                stallReason = nil
+            }
         case .recordHold:
             break
         case .scratching:
