@@ -1,5 +1,7 @@
 # tepevësen
 
+[![build](https://github.com/luksgodoy/Tepev-sen/actions/workflows/build.yml/badge.svg)](https://github.com/luksgodoy/Tepev-sen/actions/workflows/build.yml)
+
 A field recorder for iPhone, built as a version of the [teenage engineering
 TP–7](https://teenage.engineering/products/tp-7) — the same design, the same
 capabilities, the same proposal, carried over to the only recorder people
@@ -167,6 +169,9 @@ tepevesen/
 - 96 kHz is a request, not a promise. Bluetooth inputs in particular will hand
   back 16 kHz, and the machine displays that rather than the number it asked
   for.
-- Not built or run here: this repository was authored in a Linux container with
-  no Swift toolchain, so the project has never been through a compiler. Treat
-  the first build as the first build.
+- **Compiled, not yet run.** CI builds the app clean for the iOS Simulator on
+  every push — zero errors, zero warnings — but nothing here has been launched
+  on a device, so no runtime behaviour is verified. The reel physics, the
+  scratch voice, the meters, haptics, route switching and transcription have
+  all been reasoned about and none of them have been heard. Expect the first
+  session on hardware to be a tuning session.
