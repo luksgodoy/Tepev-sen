@@ -106,11 +106,10 @@ final class AudioMachine: ObservableObject {
 
     // MARK: Files
 
-    private var writeFile: AVAudioFile?
+    /// Capture. Deliberately not part of the engine — see the Recording mark.
+    private var recorder: AVAudioRecorder?
     private var playFile: AVAudioFile?
     private var seekOffsetFrames: AVAudioFramePosition = 0
-    private var capturePaused = false
-    private var recordedFrames: AVAudioFramePosition = 0
     private var isConfigured = false
     /// Whether the graph standing right now was built with microphone access.
     private var configuredWithMic = false
@@ -118,11 +117,6 @@ final class AudioMachine: ObservableObject {
     /// built. Drives the sample-rate fallback in `configure`.
     private var inputIsUsable = false
     private var silentTicks = 0
-    /// How many times the tap has fired this take, regardless of what was
-    /// done with the buffers.
-    private var tapCallbacks = 0
-    /// Whether this take has already used its one automatic engine restart.
-    private var engineBounced = false
 
     private var ticker: Timer?
     private var meterAccumulator = (rms: 0.0, peak: 0.0)
@@ -328,105 +322,79 @@ final class AudioMachine: ObservableObject {
     }
 
     // MARK: - Recording
+    //
+    // Capture deliberately does not use the engine.
+    //
+    // It did, through an input tap, and on a real device the tap starved with
+    // every diagnostic healthy: valid format, active session, mic held, engine
+    // running, zero callbacks — through a stop-tap-start ordering fix and an
+    // automatic engine bounce. A recorder whose capture path can silently
+    // starve is not a recorder. AVAudioRecorder is the boring path: no graph,
+    // no tap, no render negotiation, it owns the file and reports its own
+    // meters — and it shares the session with the engine, which keeps
+    // playback, scratching and varispeed exactly as they were.
 
     /// Start a new tape. Returns the format actually being captured.
     @discardableResult
     func startRecording(to url: URL) -> (sampleRate: Double, channels: Int)? {
         configure()
 
-        // Refuse to arm unless the engine is genuinely running and the input
-        // genuinely has a format. Arming anyway is how you end up holding a
-        // recorder that shows a running counter over an empty file.
         guard AVAudioApplication.shared.recordPermission == .granted else {
             lastError = "microphone access denied"
             return nil
         }
 
-        let input = engine.inputNode
-        let tapFormat = input.outputFormat(forBus: 0)
-        guard tapFormat.sampleRate > 0, tapFormat.channelCount > 0 else {
-            lastError = "no input · \(inputDiagnostics)"
-            return nil
-        }
+        let session = AVAudioSession.sharedInstance()
+        let rate = session.sampleRate > 0 ? session.sampleRate : Self.preferredSampleRate
+        let channels = max(1, session.inputNumberOfChannels)
 
-        // Write 24-bit linear PCM at the rate we are genuinely receiving. The
-        // file the tap hands us is float32, and AVAudioFile converts on write.
+        // 24-bit linear PCM into a plain WAV, at the session's honest rate.
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: tapFormat.sampleRate,
-            AVNumberOfChannelsKey: tapFormat.channelCount,
+            AVSampleRateKey: rate,
+            AVNumberOfChannelsKey: channels,
             AVLinearPCMBitDepthKey: Self.bitDepth,
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsNonInterleaved: false
         ]
 
+        let recorder: AVAudioRecorder
         do {
-            writeFile = try AVAudioFile(
-                forWriting: url,
-                settings: settings,
-                commonFormat: .pcmFormatFloat32,
-                interleaved: false
-            )
+            recorder = try AVAudioRecorder(url: url, settings: settings)
         } catch {
             lastError = "tape: \(error.localizedDescription)"
             return nil
         }
 
-        capturePaused = false
-        recordedFrames = 0
-        tapCallbacks = 0
-        silentTicks = 0
-        inputStalled = false
-        stallReason = nil
+        recorder.isMeteringEnabled = true
 
-        // Stop the engine before the tap goes on, start it after. The engine
-        // idles from power-on, and a tap grafted onto a long-running I/O unit
-        // can be silently ignored — the input render path was negotiated
-        // without it, every diagnostic reads healthy, and not one buffer ever
-        // arrives. Bringing the engine up with the tap already in place is
-        // the order that delivers.
-        engine.stop()
-        engineBounced = false
-
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            self.tapCallbacks += 1
-            self.measure(buffer)
-            guard !self.capturePaused, let file = self.writeFile else { return }
-            do {
-                try file.write(from: buffer)
-                self.recordedFrames += AVAudioFramePosition(buffer.frameLength)
-            } catch {
-                DispatchQueue.main.async { self.lastError = "write: \(error.localizedDescription)" }
-            }
-        }
-
-        guard startEngine() else {
-            input.removeTap(onBus: 0)
-            writeFile = nil
+        // record() answers whether capture genuinely began. That one honest
+        // boolean is the thing the tap never gave us.
+        guard recorder.prepareToRecord(), recorder.record() else {
+            lastError = "recorder refused · \(inputDiagnostics)"
+            recorder.deleteRecording()
             return nil
         }
 
-        actualSampleRate = tapFormat.sampleRate
-        actualChannels = Int(tapFormat.channelCount)
+        self.recorder = recorder
+        silentTicks = 0
+        inputStalled = false
+        stallReason = nil
+        actualSampleRate = rate
+        actualChannels = channels
         transport = .recording
-        return (tapFormat.sampleRate, Int(tapFormat.channelCount))
+        return (rate, channels)
     }
 
     /// Stop capture and close the tape. Returns its duration in seconds.
     @discardableResult
     func stopRecording() -> Double {
-        engine.inputNode.removeTap(onBus: 0)
-        let rate = writeFile?.processingFormat.sampleRate ?? 1
-        let seconds = Double(recordedFrames) / max(rate, 1)
-        writeFile = nil
-        capturePaused = false
-        recordedFrames = 0
+        let seconds = recorder?.currentTime ?? 0
+        recorder?.stop()
+        recorder = nil
         recordedDuration = 0
         silentTicks = 0
-        tapCallbacks = 0
         inputStalled = false
         stallReason = nil
         transport = .stopped
@@ -437,12 +405,16 @@ final class AudioMachine: ObservableObject {
 
     /// A finger on the reel: still armed, no longer capturing.
     func holdCapture(_ hold: Bool) {
-        guard writeFile != nil else { return }
-        capturePaused = hold
+        guard let recorder else { return }
+        if hold {
+            recorder.pause()
+        } else {
+            recorder.record()
+        }
         transport = hold ? .recordHold : .recording
     }
 
-    var isRecording: Bool { writeFile != nil }
+    var isRecording: Bool { recorder != nil }
 
     // MARK: - Playback
 
@@ -683,6 +655,13 @@ final class AudioMachine: ObservableObject {
         return min(max((db + 54) / 54, 0), 1)
     }
 
+    /// The recorder's meters report decibels directly. Same floor and range
+    /// as the amplitude path, so both draw identically on the display.
+    private static func normalize(fromDecibels db: Float) -> Float {
+        guard db.isFinite, db > -54 else { return 0 }
+        return min(max((db + 54) / 54, 0), 1)
+    }
+
     // MARK: - Tick
 
     private func startTicker() {
@@ -706,24 +685,25 @@ final class AudioMachine: ObservableObject {
         case .playing:
             position = currentTime()
         case .recording:
-            recordedDuration = Double(recordedFrames) / max(actualSampleRate, 1)
-            // Two thirds of a second of armed silence is not a quiet room —
-            // a live input delivers buffers whether or not there is sound in
-            // them. No buffers at all means no input.
-            if recordedFrames == 0 {
+            guard let recorder else { break }
+            recordedDuration = recorder.currentTime
+
+            // The recorder's meters replace the tap's. Same decibel floor as
+            // measure(), so the display reads identically either way.
+            recorder.updateMeters()
+            let rms = Double(Self.normalize(fromDecibels: recorder.averagePower(forChannel: 0)))
+            let pk = Double(Self.normalize(fromDecibels: recorder.peakPower(forChannel: 0)))
+            level = max(rms, level * 0.72)
+            peak = max(pk, peak * 0.94)
+
+            // A recorder that claims to be recording while its clock sits at
+            // zero is stalled, and the display says so rather than counting
+            // over an empty file.
+            if recorder.currentTime <= 0 || !recorder.isRecording {
                 silentTicks += 1
-                // A third of a second armed with nothing arriving: bounce the
-                // engine once, with the tap still in place. Taps survive a
-                // stop/start, and coming up fresh re-negotiates the input
-                // render path with the tap included.
-                if silentTicks == 10, !engineBounced {
-                    engineBounced = true
-                    engine.stop()
-                    startEngine()
-                }
                 if silentTicks > 20, !inputStalled {
                     inputStalled = true
-                    stallReason = tapCallbacks == 0 ? "no input" : "write failed"
+                    stallReason = "no input"
                 }
             } else if silentTicks != 0 || inputStalled {
                 silentTicks = 0
