@@ -21,6 +21,11 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 
+	<!-- standard networking only (there is none) — skips the export-compliance
+	     questionnaire on every App Store upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+
 	<!-- the machine records. it needs the mic. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>tepevësen is a field recorder. the microphone is the built-in mic and every input jack.</string>
