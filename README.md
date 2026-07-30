@@ -168,9 +168,10 @@ tepevesen/
   floor set by the iPhone's microphone, not by this code — and requesting more
   than the mic can do silently disables it, which is a worse trade than the
   rate. The display reports the rate actually captured.
-- **Compiled, not yet run.** CI builds the app clean for the iOS Simulator on
-  every push — zero errors, zero warnings — but nothing here has been launched
-  on a device, so no runtime behaviour is verified. The reel physics, the
-  scratch voice, the meters, haptics, route switching and transcription have
-  all been reasoned about and none of them have been heard. Expect the first
-  session on hardware to be a tuning session.
+- **Recording is verified on a real iPhone** (iOS 26): memo → counter →
+  stop → play, end to end. Capture runs on `AVAudioRecorder` by hard-won
+  design — the engine-tap approach starved silently on device with every
+  diagnostic healthy, and a recorder must not have silent failure modes.
+  The reel's scratch feel, haptics, transcription and the rest of the
+  machine work in code but haven't had a real shakedown yet; expect
+  tuning, not surgery.
